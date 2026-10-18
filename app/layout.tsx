@@ -1,4 +1,5 @@
-import type { Metadata } from 'next';
+import type {Metadata} from 'next';
 import './globals.css';
-export const metadata: Metadata = { title: 'Johor Commodity Exchange | Market Terminal', description: 'Commodity prices, daily market history and exchange administration terminal.' };
-export default function RootLayout({children}:{children:React.ReactNode}) { return <html lang="id"><body>{children}</body></html>; }
+import {MarketDataProvider} from '@/components/MarketDataProvider';
+export const metadata:Metadata={title:'Johor Commodity Exchange',description:'Premium commodity market reference terminal'};
+export default function RootLayout({children}:{children:React.ReactNode}){return <html lang="id"><body><MarketDataProvider>{children}</MarketDataProvider></body></html>}
