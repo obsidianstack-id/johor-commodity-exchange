@@ -1,25 +1,97 @@
-'use client';
-import {useEffect,useMemo,useState} from 'react';
-import type {FormEvent} from 'react';
-import Shell from '@/components/Shell';
-import {useMarketData} from '@/components/MarketDataProvider';
-import {rangeFor} from '@/lib/data';
-import {supabase} from '@/lib/supabase';
-import {LockKeyhole,LogOut,Save,ShieldCheck,RefreshCw} from 'lucide-react';
-export default function AdminPage(){
- const {commodities,settings,histories,connected,refresh}=useMarketData();
- const [email,setEmail]=useState('');const [password,setPassword]=useState('');const [sessionReady,setSessionReady]=useState(false);const [userId,setUserId]=useState<string|null>(null);const [isAdmin,setIsAdmin]=useState(false);const [authBusy,setAuthBusy]=useState(false);
- const [fx,setFx]=useState(String(settings.usd_per_gold));const [importTax,setImportTax]=useState(String(settings.import_tax_pct));const [domesticTax,setDomesticTax]=useState(String(settings.domestic_export_tax_pct));const [selected,setSelected]=useState('makanan');const [gold,setGold]=useState('0.86');const [date,setDate]=useState('2026-10-19');const [open,setOpen]=useState('16.77');const [high,setHigh]=useState('16.77');const [low,setLow]=useState('16.77');const [close,setClose]=useState('16.77');const [feedback,setFeedback]=useState('');const [busy,setBusy]=useState(false);
- const chosen=commodities.find(c=>c.slug===selected)||commodities[0];const fxNum=Number(fx);const goldNum=Number(gold);const priceUsd=goldNum*fxNum;const range=useMemo(()=>rangeFor(Number.isFinite(priceUsd)?priceUsd:0,{usd_per_gold:fxNum||0,import_tax_pct:Number(importTax)||0,domestic_export_tax_pct:Number(domesticTax)||0},Number.isFinite(goldNum)?goldNum:0),[priceUsd,fxNum,importTax,domesticTax]);
- useEffect(()=>{setFx(String(settings.usd_per_gold));setImportTax(String(settings.import_tax_pct));setDomesticTax(String(settings.domestic_export_tax_pct));},[settings]);
- useEffect(()=>{const c=commodities.find(x=>x.slug===selected);if(c){setGold(String(c.priceGold));const h=histories[selected]||[];const last=h[h.length-1];if(last){setDate(last.date);setOpen(last.open.toFixed(2));setHigh(last.high.toFixed(2));setLow(last.low.toFixed(2));setClose(last.close.toFixed(2));}}},[selected,connected]);
- useEffect(()=>{if(!supabase){setSessionReady(true);return;}let mounted=true;supabase.auth.getSession().then(async({data})=>{if(!mounted)return;const user=data.session?.user;setUserId(user?.id||null);if(user){const {data:p}=await supabase.from('profiles').select('is_admin').eq('id',user.id).maybeSingle();if(mounted)setIsAdmin(Boolean(p?.is_admin));}setSessionReady(true)});const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>{setUserId(session?.user.id||null);if(!session?.user){setIsAdmin(false);setSessionReady(true);}else {const activeUserId=session.user.id;setTimeout(async()=>{const {data:p}=await supabase!.from('profiles').select('is_admin').eq('id',activeUserId).maybeSingle();if(mounted){setIsAdmin(Boolean(p?.is_admin));setSessionReady(true);}},0);}});return()=>{mounted=false;subscription.unsubscribe();};},[]);
- const signIn=async(e:FormEvent)=>{e.preventDefault();if(!supabase){setFeedback('Supabase belum dikonfigurasi.');return;}setAuthBusy(true);setFeedback('');const {error}=await supabase.auth.signInWithPassword({email,password});setAuthBusy(false);if(error)setFeedback(`Login gagal: ${error.message}`);};
- const signOut=async()=>{await supabase?.auth.signOut();setUserId(null);setIsAdmin(false);setFeedback('Sesi admin telah berakhir.');};
- const saveSettings=async()=>{if(!supabase||!isAdmin)return;const nums=[fxNum,Number(importTax),Number(domesticTax)];if(nums.some(n=>!Number.isFinite(n))||fxNum<=0||Number(importTax)<0||Number(importTax)>100||Number(domesticTax)<0||Number(domesticTax)>100){setFeedback('Periksa kurs dan pajak. Kurs harus > 0; pajak 0–100%.');return;}setBusy(true);const {error}=await supabase.rpc('admin_update_settings',{p_usd_per_gold:fxNum,p_import_tax_pct:Number(importTax),p_domestic_export_tax_pct:Number(domesticTax)});setBusy(false);if(error){setFeedback(`Gagal menyimpan pengaturan: ${error.message}`);return;}await refresh();setFeedback('Pengaturan kurs dan pajak berhasil disimpan. Bursa pengguna akan menerima pembaruan realtime.');};
- const savePrice=async()=>{if(!supabase||!isAdmin)return;if(!Number.isFinite(goldNum)||goldNum<=0||!Number.isFinite(fxNum)||fxNum<=0){setFeedback('Harga GOLD dan kurs harus berupa angka lebih besar dari nol.');return;}setBusy(true);const {error}=await supabase.rpc('admin_update_commodity_price',{p_slug:selected,p_price_gold:goldNum});setBusy(false);if(error){setFeedback(`Gagal menyimpan harga: ${error.message}`);return;}await refresh();setFeedback(`Harga ${chosen.name} tersimpan. Referensi baru sekitar $${priceUsd.toFixed(2)} USD; perubahan akan disinkronkan ke halaman pengguna.`);};
- const saveHistory=async()=>{if(!supabase||!isAdmin)return;const o=Number(open),h=Number(high),l=Number(low),c=Number(close);if(!date||![o,h,l,c].every(n=>Number.isFinite(n)&&n>0)){setFeedback('Tanggal dan seluruh nilai OHLC harus valid serta lebih besar dari nol.');return;}if(l>Math.min(o,c)||h<Math.max(o,c)||l>h){setFeedback('OHLC tidak valid: Low ≤ Open/Close ≤ High.');return;}setBusy(true);const {error}=await supabase.rpc('admin_upsert_price_history',{p_slug:selected,p_date:date,p_open_usd:o,p_high_usd:h,p_low_usd:l,p_close_usd:c});setBusy(false);if(error){setFeedback(`Gagal menyimpan riwayat: ${error.message}`);return;}await refresh();setFeedback(`Riwayat ${chosen.name} tanggal ${date} tersimpan. Harga terakhir dan grafik pengguna diperbarui.`);};
- if(!sessionReady)return <Shell active="admin"><main className="content"><div className="eyebrow">SECURE OPERATIONS</div><h1 className="page-title">Administration Console</h1><div className="notice">Memeriksa sesi admin…</div></main></Shell>;
- if(!userId||!isAdmin)return <Shell active="admin"><main className="content admin-auth-wrap"><div className="eyebrow">JOHOR EXCHANGE / RESTRICTED ACCESS</div><h1 className="page-title">Administration Console</h1><p className="muted">Masuk dengan akun Supabase Auth yang sudah diberi peran admin. Halaman ini tidak membuka akses tulis hanya karena URL diketahui.</p><form className="panel admin-auth-panel" onSubmit={signIn}><div className="panel-head"><div><div className="eyebrow">SECURITY GATE</div><strong style={{display:'block',marginTop:5}}>Admin sign-in</strong></div><LockKeyhole size={22}/></div><div className="admin-form-body"><div className="field"><label>Email admin</label><input type="email" autoComplete="username" value={email} onChange={e=>setEmail(e.target.value)} required placeholder="admin@example.com"/></div><div className="field"><label>Password</label><input type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} required placeholder="Password akun Supabase Auth"/></div><button className="button button-primary full-button" disabled={authBusy||!supabase}>{authBusy?'SIGNING IN…':'SIGN IN SECURELY ↗'}</button>{userId&&!isAdmin&&<div className="notice">Akun ini berhasil login, tetapi belum memiliki peran admin. Administrator database perlu mengatur `profiles.is_admin = true` untuk user ID ini.</div>}{!supabase&&<div className="notice">Supabase belum tersambung. Tambahkan environment variables dan deploy ulang.</div>}{feedback&&<div className="notice">{feedback}</div>}</div></form><div className="footer">ADMIN MUTATIONS ARE CHECKED BY DATABASE FUNCTIONS · NEVER SHARE YOUR PASSWORD OR SECRET KEY</div></main></Shell>;
- return <Shell active="admin"><main className="content"><div className="admin-title-row"><div><div className="eyebrow">EXCHANGE OPERATIONS / CONTROL ROOM</div><h1 className="page-title">Administration Console</h1><div className="muted">Perubahan disimpan di PostgreSQL dan disiarkan ke semua klien yang terhubung.</div></div><button className="button" onClick={signOut}><LogOut size={15}/> Sign out</button></div><div className="admin-status-strip"><span><ShieldCheck size={16}/> AUTHENTICATED ADMIN</span><span className={connected?'positive':'negative'}>{connected?'● DATABASE CONNECTED':'● DATABASE NOT CONNECTED'}</span><button className="button" onClick={()=>void refresh()}><RefreshCw size={14}/> Refresh</button></div><div className="admin-layout" style={{marginTop:16}}><section className="panel"><div className="panel-head"><div><div className="eyebrow">01 / FX & TAX POLICY</div><strong style={{display:'block',marginTop:5}}>Exchange Parameters</strong></div><span className="pill">GLOBAL</span></div><div className="admin-form-body"><div className="field"><label>USD per GOLD</label><input type="number" min="0.000001" step="0.01" value={fx} onChange={e=>setFx(e.target.value)}/><small className="muted">Default: 1.00 GOLD = 19.50 USD</small></div><div className="form-grid"><div className="field"><label>Import tax (%)</label><input type="number" min="0" max="100" step="0.1" value={importTax} onChange={e=>setImportTax(e.target.value)}/></div><div className="field"><label>Domestic / export tax (%)</label><input type="number" min="0" max="100" step="0.1" value={domesticTax} onChange={e=>setDomesticTax(e.target.value)}/></div></div><div className="notice">Preview for selected commodity<br/>Base reference: <strong>${(goldNum*fxNum||0).toFixed(2)}</strong><br/>Published minimum: <strong>${range.min.toFixed(2)}</strong><br/>Import maximum: <strong>${range.max.toFixed(2)}</strong><small style={{display:'block',marginTop:7}}>Catatan dokumen: angka minimum resmi sama dengan harga dasar, meski teks menyebut pajak domestik/ekspor 3%. Sistem mempertahankan tabel resmi (minimum = harga dasar; maksimum = dasar + pajak impor) sampai kebijakan minimum dikonfirmasi.</small></div><button className="button button-primary full-button" disabled={busy} onClick={()=>void saveSettings()}><Save size={15}/> SAVE FX & TAX SETTINGS</button></div></section><section className="panel"><div className="panel-head"><div><div className="eyebrow">02 / SPOT PRICE CONTROL</div><strong style={{display:'block',marginTop:5}}>Commodity Pricing</strong></div><span className="pill">AUTO-CONVERT</span></div><div className="admin-form-body"><div className="field"><label>Instrument</label><select value={selected} onChange={e=>setSelected(e.target.value)}>{commodities.map(c=><option value={c.slug} key={c.slug}>{c.symbol} — {c.name}</option>)}</select></div><div className="field"><label>Base price (GOLD)</label><input type="number" min="0.000001" step="0.0001" value={gold} onChange={e=>setGold(e.target.value)}/></div><div className="price-preview"><div className="muted">AUTO-CONVERTED REFERENCE</div><div className="stat-value">${(Number.isFinite(priceUsd)?priceUsd:0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})} <span className="muted" style={{fontSize:11}}>USD</span></div><div className="muted">Rate: {Number.isFinite(fxNum)?fxNum.toFixed(2):'—'} USD / GOLD</div><div className="range-preview">Official range <strong>${range.min.toFixed(2)} – ${range.max.toFixed(2)}</strong></div></div><button className="button button-primary full-button" disabled={busy||!connected} onClick={()=>void savePrice()}><Save size={15}/> SAVE COMMODITY PRICE</button></div></section><section className="panel" style={{gridColumn:'1 / -1'}}><div className="panel-head"><div><div className="eyebrow">03 / HISTORICAL INDEX INPUT</div><strong style={{display:'block',marginTop:5}}>Daily OHLC Editor</strong></div><span className="pill">DATABASE UPSERT</span></div><div className="admin-form-body"><div className="form-grid"><div className="field"><label>Commodity</label><select value={selected} onChange={e=>setSelected(e.target.value)}>{commodities.map(c=><option value={c.slug} key={c.slug}>{c.name}</option>)}</select></div><div className="field"><label>Trading date</label><input type="date" value={date} onChange={e=>setDate(e.target.value)} required/></div><div className="field"><label>Open (USD)</label><input type="number" min="0.01" step="0.01" value={open} onChange={e=>setOpen(e.target.value)} required/></div><div className="field"><label>High (USD)</label><input type="number" min="0.01" step="0.01" value={high} onChange={e=>setHigh(e.target.value)} required/></div><div className="field"><label>Low (USD)</label><input type="number" min="0.01" step="0.01" value={low} onChange={e=>setLow(e.target.value)} required/></div><div className="field"><label>Close (USD)</label><input type="number" min="0.01" step="0.01" value={close} onChange={e=>setClose(e.target.value)} required/></div><div className="field"><label>Calculated close (GOLD)</label><input readOnly value={fxNum>0?(Number(close)/fxNum).toFixed(4):'—'}/></div><div className="field"><label>Last stored close</label><input readOnly value={(histories[selected]?.length?`$${histories[selected][histories[selected].length-1].close.toFixed(2)}`:'No history')}/></div></div><div className="notice">Validasi ketat: Low ≤ Open dan Close ≤ High; Low tidak boleh melebihi High. Jika tanggal sudah ada, record akan diperbarui, bukan digandakan.</div><button className="button button-primary" disabled={busy||!connected} onClick={()=>void saveHistory()}><Save size={15}/> SAVE DAILY OHLC RECORD</button></div></section><section className="panel" style={{gridColumn:'1 / -1'}}><div className="panel-head"><div><div className="eyebrow">04 / CURRENT CATALOG</div><strong style={{display:'block',marginTop:5}}>Active Commodity Registry</strong></div><span className="pill">{commodities.length} RECORDS</span></div><div className="table-wrap"><table><thead><tr><th>SYMBOL</th><th>COMMODITY</th><th className="right">PRICE GOLD</th><th className="right">PRICE USD</th><th className="right">RANGE MIN–MAX</th><th>STATUS</th></tr></thead><tbody>{commodities.map(c=>{const r=rangeFor(c.priceUsd,settings,c.priceGold);return <tr key={c.slug}><td><span className="ticker">{c.symbol}</span></td><td>{c.name}</td><td className="right">{c.priceGold.toFixed(4)}</td><td className="right">${c.priceUsd.toFixed(2)}</td><td className="right">${r.min.toFixed(2)} – ${r.max.toFixed(2)}</td><td className="positive">● ACTIVE</td></tr>})}</tbody></table></div></section>{feedback&&<div className="notice" role="status" aria-live="polite" style={{gridColumn:'1 / -1'}}>{feedback}</div>}</div><div className="footer">ALL CHANGES ARE SERVER-VALIDATED, AUDIT-LOGGED AND BROADCAST THROUGH SUPABASE REALTIME</div></main></Shell>
-}
+useEffect(() => {
+  const client = supabase;
+
+  if (!client) {
+    setSessionReady(true);
+    return;
+  }
+
+  let mounted = true;
+
+  const checkAdmin = async (userId: string) => {
+    try {
+      const { data, error } = await client
+        .from('profiles')
+        .select('is_admin')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (!mounted) return;
+
+      if (error) {
+        console.error('Gagal memeriksa hak admin:', error.message);
+        setIsAdmin(false);
+      } else {
+        setIsAdmin(Boolean(data?.is_admin));
+      }
+
+      setSessionReady(true);
+    } catch (error) {
+      if (!mounted) return;
+
+      console.error('Gagal memeriksa sesi admin:', error);
+      setIsAdmin(false);
+      setSessionReady(true);
+    }
+  };
+
+  const initializeSession = async () => {
+    try {
+      const {
+        data: { session },
+        error,
+      } = await client.auth.getSession();
+
+      if (!mounted) return;
+
+      if (error) {
+        console.error('Gagal mengambil sesi:', error.message);
+        setUserId(null);
+        setIsAdmin(false);
+        setSessionReady(true);
+        return;
+      }
+
+      const user = session?.user ?? null;
+
+      setUserId(user?.id ?? null);
+
+      if (user) {
+        await checkAdmin(user.id);
+      } else {
+        setIsAdmin(false);
+        setSessionReady(true);
+      }
+    } catch (error) {
+      if (!mounted) return;
+
+      console.error('Gagal menginisialisasi sesi:', error);
+      setUserId(null);
+      setIsAdmin(false);
+      setSessionReady(true);
+    }
+  };
+
+  void initializeSession();
+
+  const {
+    data: { subscription },
+  } = client.auth.onAuthStateChange((_event, session) => {
+    const user = session?.user ?? null;
+
+    setUserId(user?.id ?? null);
+
+    if (!user) {
+      setIsAdmin(false);
+      setSessionReady(true);
+      return;
+    }
+
+    void checkAdmin(user.id);
+  });
+
+  return () => {
+    mounted = false;
+    subscription.unsubscribe();
+  };
+}, []);
