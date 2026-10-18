@@ -40,22 +40,22 @@ export default function AdminPage() {
 
   const [selected, setSelected] = useState('makanan');
   const [gold, setGold] = useState('0.86');
-  const [date, setDate] = useState('2026-10-19');
 
+  const [date, setDate] = useState('2026-10-19');
   const [open, setOpen] = useState('16.77');
   const [high, setHigh] = useState('16.77');
   const [low, setLow] = useState('16.77');
   const [close, setClose] = useState('16.77');
 
-  // Melindungi input OHLC saat pengguna sedang mengetik.
+  // Mencegah data realtime menimpa input yang sedang diedit.
   const [ohlcDirty, setOhlcDirty] = useState(false);
 
   const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const chosen =
-    commodities.find((item) => item.slug === selected) ??
-    commodities[0];
+  const chosen = commodities.find(
+    (item) => item.slug === selected,
+  ) ?? commodities[0];
 
   const fxNum = Number(fx);
   const goldNum = Number(gold);
@@ -75,15 +75,14 @@ export default function AdminPage() {
     [priceUsd, fxNum, importTax, domesticTax, goldNum],
   );
 
-  // Sinkronisasi pengaturan dari database.
+  // Sinkronisasi pengaturan.
   useEffect(() => {
     setFx(String(settings.usd_per_gold));
     setImportTax(String(settings.import_tax_pct));
     setDomesticTax(String(settings.domestic_export_tax_pct));
   }, [settings]);
 
-  // Memuat data komoditas dan OHLC.
-  // Jangan menimpa input OHLC selama pengguna sedang mengedit.
+  // Memuat OHLC hanya ketika tidak sedang diedit.
   useEffect(() => {
     if (ohlcDirty) return;
 
@@ -105,16 +104,10 @@ export default function AdminPage() {
       setLow(last.low.toFixed(2));
       setClose(last.close.toFixed(2));
     }
-  }, [
-    selected,
-    connected,
-    commodities,
-    histories,
-    ohlcDirty,
-  ]);
+  }, [selected, commodities, histories, ohlcDirty]);
 
   // ============================================================
-  // AUTENTIKASI DAN PEMERIKSAAN HAK ADMIN
+  // AUTENTIKASI DAN PEMERIKSAAN ADMIN
   // ============================================================
   useEffect(() => {
     let mounted = true;
@@ -149,25 +142,17 @@ export default function AdminPage() {
             'Gagal memeriksa status admin:',
             error.message,
           );
-
           setIsAdmin(false);
           return;
         }
 
         setIsAdmin(Boolean(data?.is_admin));
       } catch (error) {
-        console.error(
-          'Terjadi kesalahan saat memeriksa admin:',
-          error,
-        );
+        console.error('Kesalahan pemeriksaan admin:', error);
 
-        if (mounted) {
-          setIsAdmin(false);
-        }
+        if (mounted) setIsAdmin(false);
       } finally {
-        if (mounted) {
-          setSessionReady(true);
-        }
+        if (mounted) setSessionReady(true);
       }
     }
 
@@ -178,11 +163,7 @@ export default function AdminPage() {
         if (!mounted) return;
 
         if (error) {
-          console.error(
-            'Gagal memeriksa sesi:',
-            error.message,
-          );
-
+          console.error('Gagal memeriksa sesi:', error.message);
           setSessionReady(true);
           return;
         }
@@ -200,9 +181,7 @@ export default function AdminPage() {
       } catch (error) {
         console.error('Gagal memuat sesi:', error);
 
-        if (mounted) {
-          setSessionReady(true);
-        }
+        if (mounted) setSessionReady(true);
       }
     }
 
@@ -224,9 +203,7 @@ export default function AdminPage() {
       }
 
       setTimeout(() => {
-        if (mounted) {
-          void checkAdmin(user.id);
-        }
+        if (mounted) void checkAdmin(user.id);
       }, 0);
     });
 
@@ -301,7 +278,7 @@ export default function AdminPage() {
   };
 
   // ============================================================
-  // SIMPAN PENGATURAN KURS DAN PAJAK
+  // SIMPAN KURS DAN PAJAK
   // ============================================================
   const saveSettings = async () => {
     const configuredClient = supabase;
@@ -352,9 +329,7 @@ export default function AdminPage() {
 
       await refresh();
 
-      setFeedback(
-        'Pengaturan kurs dan pajak berhasil disimpan.',
-      );
+      setFeedback('Pengaturan kurs dan pajak berhasil disimpan.');
     } catch (error) {
       setFeedback(
         error instanceof Error
@@ -402,9 +377,7 @@ export default function AdminPage() {
       );
 
       if (error) {
-        setFeedback(
-          `Gagal menyimpan harga: ${error.message}`,
-        );
+        setFeedback(`Gagal menyimpan harga: ${error.message}`);
         return;
       }
 
@@ -425,7 +398,7 @@ export default function AdminPage() {
   };
 
   // ============================================================
-  // SIMPAN RIWAYAT HARGA OHLC
+  // SIMPAN RIWAYAT OHLC
   // ============================================================
   const saveHistory = async () => {
     const configuredClient = supabase;
@@ -486,10 +459,9 @@ export default function AdminPage() {
         return;
       }
 
-      // Pertahankan nilai form yang baru saja disimpan.
-      // Setelah refresh selesai, izinkan sinkronisasi berikutnya.
       await refresh();
 
+      // Buka kembali sinkronisasi setelah proses simpan selesai.
       setOhlcDirty(false);
 
       setFeedback(
@@ -517,16 +489,14 @@ export default function AdminPage() {
           <h1 className="page-title">
             Administration Console
           </h1>
-          <div className="notice">
-            Memeriksa sesi admin…
-          </div>
+          <div className="notice">Memeriksa sesi admin…</div>
         </main>
       </Shell>
     );
   }
 
   // ============================================================
-  // HALAMAN LOGIN
+  // LOGIN
   // ============================================================
   if (!userId || !isAdmin) {
     return (
@@ -542,8 +512,7 @@ export default function AdminPage() {
 
           <p className="muted">
             Masuk menggunakan akun Supabase Auth yang telah
-            diberi hak administrator. Mengetahui URL halaman
-            tidak otomatis memberikan akses administrator.
+            diberi hak administrator.
           </p>
 
           <form
@@ -562,7 +531,6 @@ export default function AdminPage() {
                   Admin sign-in
                 </strong>
               </div>
-
               <LockKeyhole size={22} />
             </div>
 
@@ -600,24 +568,19 @@ export default function AdminPage() {
                 disabled={authBusy || !supabase}
                 type="submit"
               >
-                {authBusy
-                  ? 'SIGNING IN…'
-                  : 'SIGN IN SECURELY ↗'}
+                {authBusy ? 'SIGNING IN…' : 'SIGN IN SECURELY ↗'}
               </button>
 
               {userId && !isAdmin && (
                 <div className="notice">
                   Akun berhasil login, tetapi belum memiliki
-                  hak administrator. Periksa apakah
-                  profiles.is_admin bernilai true untuk user
-                  ID tersebut.
+                  hak administrator. Periksa profiles.is_admin.
                 </div>
               )}
 
               {!supabase && (
                 <div className="notice">
-                  Supabase belum tersambung. Periksa environment
-                  variables dan deploy ulang.
+                  Supabase belum dikonfigurasi.
                 </div>
               )}
 
@@ -692,14 +655,13 @@ export default function AdminPage() {
           className="admin-layout"
           style={{ marginTop: 16 }}
         >
-          {/* PENGATURAN KURS DAN PAJAK */}
+          {/* 01 — FX DAN PAJAK */}
           <section className="panel">
             <div className="panel-head">
               <div>
                 <div className="eyebrow">
                   01 / FX & TAX POLICY
                 </div>
-
                 <strong
                   style={{
                     display: 'block',
@@ -709,7 +671,6 @@ export default function AdminPage() {
                   Exchange Parameters
                 </strong>
               </div>
-
               <span className="pill">GLOBAL</span>
             </div>
 
@@ -783,14 +744,13 @@ export default function AdminPage() {
             </div>
           </section>
 
-          {/* HARGA KOMODITAS */}
+          {/* 02 — HARGA KOMODITAS */}
           <section className="panel">
             <div className="panel-head">
               <div>
                 <div className="eyebrow">
                   02 / SPOT PRICE CONTROL
                 </div>
-
                 <strong
                   style={{
                     display: 'block',
@@ -800,14 +760,12 @@ export default function AdminPage() {
                   Commodity Pricing
                 </strong>
               </div>
-
               <span className="pill">AUTO-CONVERT</span>
             </div>
 
             <div className="admin-form-body">
               <div className="field">
                 <label>Instrument</label>
-
                 <select
                   value={selected}
                   onChange={(event) => {
@@ -828,7 +786,6 @@ export default function AdminPage() {
 
               <div className="field">
                 <label>Base price (GOLD)</label>
-
                 <input
                   type="number"
                   min="0.000001"
@@ -890,7 +847,7 @@ export default function AdminPage() {
             </div>
           </section>
 
-          {/* EDITOR RIWAYAT OHLC */}
+          {/* 03 — EDITOR OHLC */}
           <section
             className="panel"
             style={{ gridColumn: '1 / -1' }}
@@ -900,7 +857,6 @@ export default function AdminPage() {
                 <div className="eyebrow">
                   03 / HISTORICAL INDEX INPUT
                 </div>
-
                 <strong
                   style={{
                     display: 'block',
@@ -910,7 +866,6 @@ export default function AdminPage() {
                   Daily OHLC Editor
                 </strong>
               </div>
-
               <span className="pill">DATABASE UPSERT</span>
             </div>
 
@@ -918,7 +873,6 @@ export default function AdminPage() {
               <div className="form-grid">
                 <div className="field">
                   <label>Commodity</label>
-
                   <select
                     value={selected}
                     onChange={(event) => {
@@ -939,7 +893,6 @@ export default function AdminPage() {
 
                 <div className="field">
                   <label>Trading date</label>
-
                   <input
                     type="date"
                     value={date}
@@ -953,75 +906,63 @@ export default function AdminPage() {
 
                 <div className="field">
                   <label>Open (USD)</label>
-
                   <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     value={open}
                     onChange={(event) => {
                       setOhlcDirty(true);
                       setOpen(event.target.value);
                     }}
-                    required
                   />
                 </div>
 
                 <div className="field">
                   <label>High (USD)</label>
-
                   <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     value={high}
                     onChange={(event) => {
                       setOhlcDirty(true);
                       setHigh(event.target.value);
                     }}
-                    required
                   />
                 </div>
 
                 <div className="field">
                   <label>Low (USD)</label>
-
                   <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     value={low}
                     onChange={(event) => {
                       setOhlcDirty(true);
                       setLow(event.target.value);
                     }}
-                    required
                   />
                 </div>
 
                 <div className="field">
                   <label>Close (USD)</label>
-
                   <input
-                    type="number"
-                    min="0.01"
-                    step="0.01"
+                    type="text"
+                    inputMode="decimal"
                     value={close}
                     onChange={(event) => {
                       setOhlcDirty(true);
                       setClose(event.target.value);
                     }}
-                    required
                   />
                 </div>
 
                 <div className="field">
                   <label>Calculated close (GOLD)</label>
-
                   <input
                     readOnly
                     value={
-                      fxNum > 0
+                      fxNum > 0 && close !== '' &&
+                      Number.isFinite(Number(close))
                         ? (Number(close) / fxNum).toFixed(4)
                         : '—'
                     }
@@ -1030,7 +971,6 @@ export default function AdminPage() {
 
                 <div className="field">
                   <label>Last stored close</label>
-
                   <input
                     readOnly
                     value={
@@ -1044,16 +984,17 @@ export default function AdminPage() {
 
               {ohlcDirty && (
                 <div className="notice">
-                  Kamu sedang mengedit data OHLC. Perubahan
-                  belum tersimpan ke database sampai tombol
-                  SAVE DAILY OHLC RECORD ditekan.
+                  Data sedang diedit dan belum disimpan.
+                  Nilai tidak akan disinkronkan ulang sampai
+                  penyimpanan berhasil atau komoditas diganti.
                 </div>
               )}
 
               <div className="notice">
-                Validasi OHLC: Low tidak boleh melebihi Open,
-                Close, atau High. High tidak boleh lebih rendah
-                daripada Open atau Close.
+                Validasi OHLC: Low harus lebih kecil atau sama
+                dengan Open dan Close. High harus lebih besar
+                atau sama dengan Open dan Close. Semua harga
+                harus lebih besar dari nol.
               </div>
 
               <button
@@ -1069,7 +1010,7 @@ export default function AdminPage() {
             </div>
           </section>
 
-          {/* DAFTAR KOMODITAS */}
+          {/* 04 — DAFTAR KOMODITAS */}
           <section
             className="panel"
             style={{ gridColumn: '1 / -1' }}
@@ -1079,7 +1020,6 @@ export default function AdminPage() {
                 <div className="eyebrow">
                   04 / CURRENT CATALOG
                 </div>
-
                 <strong
                   style={{
                     display: 'block',
@@ -1089,7 +1029,6 @@ export default function AdminPage() {
                   Active Commodity Registry
                 </strong>
               </div>
-
               <span className="pill">
                 {commodities.length} RECORDS
               </span>
