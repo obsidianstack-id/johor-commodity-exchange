@@ -1,52 +1,114 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
+import Shell from '@/components/Shell';
+import { useMarketData } from '@/components/MarketDataProvider';
+import { rangeFor } from '@/lib/data';
 import { supabase } from '@/lib/supabase';
-
-type Settings = {
-  usd_per_gold: number;
-  import_tax_pct: number;
-  domestic_export_tax_pct: number;
-};
-
-const DEFAULT_SETTINGS: Settings = {
-  usd_per_gold: 19.5,
-  import_tax_pct: 5,
-  domestic_export_tax_pct: 3,
-};
+import {
+  LockKeyhole,
+  LogOut,
+  Save,
+  ShieldCheck,
+  RefreshCw,
+} from 'lucide-react';
 
 export default function AdminPage() {
+  const { commodities, settings, histories, connected, refresh } =
+    useMarketData();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-
+  const [sessionReady, setSessionReady] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
-  const [sessionReady, setSessionReady] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
 
-  const [settings, setSettings] =
-    useState<Settings>(DEFAULT_SETTINGS);
+  const [fx, setFx] = useState(String(settings.usd_per_gold));
+  const [importTax, setImportTax] = useState(
+    String(settings.import_tax_pct),
+  );
+  const [domesticTax, setDomesticTax] = useState(
+    String(settings.domestic_export_tax_pct),
+  );
 
-  const [fx, setFx] = useState('19.5');
-  const [importTax, setImportTax] = useState('5');
-  const [domesticTax, setDomesticTax] = useState('3');
+  const [selected, setSelected] = useState('makanan');
+  const [gold, setGold] = useState('0.86');
+  const [date, setDate] = useState('2026-10-19');
 
-  const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState('16.77');
+  const [high, setHigh] = useState('16.77');
+  const [low, setLow] = useState('16.77');
+  const [close, setClose] = useState('16.77');
+
   const [feedback, setFeedback] = useState('');
+  const [busy, setBusy] = useState(false);
 
+  const chosen =
+    commodities.find((commodity) => commodity.slug === selected) ||
+    commodities[0];
+
+  const fxNum = Number(fx);
+  const goldNum = Number(gold);
+  const priceUsd = goldNum * fxNum;
+
+  const range = useMemo(
+    () =>
+      rangeFor(
+        Number.isFinite(priceUsd) ? priceUsd : 0,
+        {
+          usd_per_gold: fxNum || 0,
+          import_tax_pct: Number(importTax) || 0,
+          domestic_export_tax_pct: Number(domesticTax) || 0,
+        },
+        Number.isFinite(goldNum) ? goldNum : 0,
+      ),
+    [priceUsd, fxNum, importTax, domesticTax, goldNum],
+  );
+
+  // Sinkronkan formulir dengan pengaturan dari database.
+  useEffect(() => {
+    setFx(String(settings.usd_per_gold));
+    setImportTax(String(settings.import_tax_pct));
+    setDomesticTax(String(settings.domestic_export_tax_pct));
+  }, [settings]);
+
+  // Muat harga dan riwayat saat komoditas berubah.
+  useEffect(() => {
+    const commodity = commodities.find(
+      (item) => item.slug === selected,
+    );
+
+    if (!commodity) return;
+
+    setGold(String(commodity.priceGold));
+
+    const history = histories[selected] || [];
+    const last = history[history.length - 1];
+
+    if (last) {
+      setDate(last.date);
+      setOpen(last.open.toFixed(2));
+      setHigh(last.high.toFixed(2));
+      setLow(last.low.toFixed(2));
+      setClose(last.close.toFixed(2));
+    }
+  }, [selected, connected, commodities, histories]);
+
+  // Pemeriksaan sesi dan hak akses administrator.
   useEffect(() => {
     const client = supabase;
+    let mounted = true;
 
     if (!client) {
-      setFeedback(
-        'Supabase belum dikonfigurasi. Periksa environment variables.'
-      );
       setSessionReady(true);
       return;
     }
 
-    let mounted = true;
-
     async function checkAdmin(id: string) {
+      if (!mounted) return;
+
       try {
         const { data, error } = await client
           .from('profiles')
@@ -57,46 +119,41 @@ export default function AdminPage() {
         if (!mounted) return;
 
         if (error) {
-          console.error('Admin check failed:', error.message);
+          console.error(
+            'Gagal memeriksa status admin:',
+            error.message,
+          );
           setIsAdmin(false);
-          setFeedback(
-            'Tidak dapat memeriksa hak admin. Periksa tabel profiles dan kebijakan RLS.'
-          );
-        } else {
-          setIsAdmin(data?.is_admin === true);
-          setFeedback(
-            data?.is_admin === true
-              ? 'Login berhasil. Hak administrator terverifikasi.'
-              : 'Akun ini belum memiliki hak administrator.'
-          );
+          return;
         }
-      } catch (error) {
-        if (!mounted) return;
 
-        console.error(error);
-        setIsAdmin(false);
-        setFeedback('Terjadi kesalahan saat memeriksa hak admin.');
+        setIsAdmin(Boolean(data?.is_admin));
+      } catch (error) {
+        console.error('Pemeriksaan admin gagal:', error);
+
+        if (mounted) {
+          setIsAdmin(false);
+        }
       } finally {
-        if (mounted) setSessionReady(true);
+        if (mounted) {
+          setSessionReady(true);
+        }
       }
     }
 
     async function initializeSession() {
       try {
-        const {
-          data: { session },
-          error,
-        } = await client.auth.getSession();
+        const { data, error } = await client.auth.getSession();
 
         if (!mounted) return;
 
         if (error) {
-          setFeedback('Gagal memuat sesi login.');
+          console.error('Gagal memeriksa sesi:', error.message);
           setSessionReady(true);
           return;
         }
 
-        const user = session?.user ?? null;
+        const user = data.session?.user ?? null;
 
         setUserId(user?.id ?? null);
 
@@ -107,11 +164,11 @@ export default function AdminPage() {
           setSessionReady(true);
         }
       } catch (error) {
-        if (!mounted) return;
+        console.error('Gagal memuat sesi:', error);
 
-        console.error(error);
-        setFeedback('Gagal menginisialisasi sesi Supabase.');
-        setSessionReady(true);
+        if (mounted) {
+          setSessionReady(true);
+        }
       }
     }
 
@@ -123,21 +180,19 @@ export default function AdminPage() {
       if (!mounted) return;
 
       const user = session?.user ?? null;
-
       setUserId(user?.id ?? null);
 
       if (!user) {
         setIsAdmin(false);
         setSessionReady(true);
-        setFeedback('Silakan login untuk melanjutkan.');
         return;
       }
 
-      setSessionReady(false);
-
-      // Jalankan pemeriksaan setelah callback auth selesai.
+      // Jalankan pemeriksaan di luar callback autentikasi.
       setTimeout(() => {
-        if (mounted) void checkAdmin(user.id);
+        if (mounted) {
+          void checkAdmin(user.id);
+        }
       }, 0);
     });
 
@@ -147,65 +202,8 @@ export default function AdminPage() {
     };
   }, []);
 
-  useEffect(() => {
-    if (!supabase || !isAdmin) return;
-
-    let mounted = true;
-
-    async function loadSettings() {
-      const client = supabase;
-
-      if (!client) return;
-
-      const { data, error } = await client
-        .from('exchange_settings')
-        .select(
-          'usd_per_gold, import_tax_pct, domestic_export_tax_pct'
-        )
-        .limit(1)
-        .maybeSingle();
-
-      if (!mounted) return;
-
-      if (error) {
-        console.error('Settings load failed:', error.message);
-        setFeedback(
-          'Login admin berhasil, tetapi pengaturan gagal dimuat. Pastikan tabel exchange_settings tersedia.'
-        );
-        return;
-      }
-
-      if (!data) {
-        setFeedback(
-          'Belum ada pengaturan kurs di exchange_settings.'
-        );
-        return;
-      }
-
-      const nextSettings: Settings = {
-        usd_per_gold: Number(data.usd_per_gold),
-        import_tax_pct: Number(data.import_tax_pct),
-        domestic_export_tax_pct: Number(
-          data.domestic_export_tax_pct
-        ),
-      };
-
-      setSettings(nextSettings);
-      setFx(String(nextSettings.usd_per_gold));
-      setImportTax(String(nextSettings.import_tax_pct));
-      setDomesticTax(
-        String(nextSettings.domestic_export_tax_pct)
-      );
-    }
-
-    void loadSettings();
-
-    return () => {
-      mounted = false;
-    };
-  }, [isAdmin]);
-
-  async function signIn(event: FormEvent<HTMLFormElement>) {
+  // Login administrator.
+  const signIn = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const client = supabase;
@@ -215,80 +213,63 @@ export default function AdminPage() {
       return;
     }
 
-    setBusy(true);
+    setAuthBusy(true);
     setFeedback('');
 
     try {
       const { error } = await client.auth.signInWithPassword({
-        email: email.trim(),
+        email,
         password,
       });
 
       if (error) {
         setFeedback(`Login gagal: ${error.message}`);
-      } else {
-        setPassword('');
-        setFeedback('Login berhasil. Memeriksa hak admin...');
       }
     } catch (error) {
-      console.error(error);
-      setFeedback('Terjadi kesalahan saat login.');
+      setFeedback(
+        error instanceof Error
+          ? error.message
+          : 'Terjadi kesalahan saat login.',
+      );
     } finally {
-      setBusy(false);
+      setAuthBusy(false);
     }
-  }
+  };
 
-  async function signOut() {
+  // Logout administrator.
+  const signOut = async () => {
     const client = supabase;
 
-    if (!client) return;
-
-    setBusy(true);
-
-    try {
-      const { error } = await client.auth.signOut();
-
-      if (error) {
-        setFeedback(`Gagal logout: ${error.message}`);
-        return;
-      }
-
-      setUserId(null);
-      setIsAdmin(false);
-      setFeedback('Kamu telah logout.');
-    } finally {
-      setBusy(false);
+    if (client) {
+      await client.auth.signOut();
     }
-  }
 
-  async function saveSettings(
-    event: FormEvent<HTMLFormElement>
-  ) {
-    event.preventDefault();
+    setUserId(null);
+    setIsAdmin(false);
+    setFeedback('Sesi admin telah berakhir.');
+  };
 
+  // Simpan pengaturan kurs dan pajak.
+  const saveSettings = async () => {
     const client = supabase;
 
-    if (!client || !isAdmin || !userId) {
-      setFeedback('Akses ditolak. Login sebagai administrator.');
-      return;
-    }
+    if (!client || !isAdmin) return;
 
-    const usdPerGold = Number(fx);
-    const importTaxPct = Number(importTax);
-    const domesticTaxPct = Number(domesticTax);
+    const importTaxNum = Number(importTax);
+    const domesticTaxNum = Number(domesticTax);
 
     if (
-      !Number.isFinite(usdPerGold) ||
-      !Number.isFinite(importTaxPct) ||
-      !Number.isFinite(domesticTaxPct) ||
-      usdPerGold <= 0 ||
-      importTaxPct < 0 ||
-      importTaxPct > 100 ||
-      domesticTaxPct < 0 ||
-      domesticTaxPct > 100
+      !Number.isFinite(fxNum) ||
+      !Number.isFinite(importTaxNum) ||
+      !Number.isFinite(domesticTaxNum) ||
+      fxNum <= 0 ||
+      importTaxNum < 0 ||
+      importTaxNum > 100 ||
+      domesticTaxNum < 0 ||
+      domesticTaxNum > 100
     ) {
       setFeedback(
-        'Kurs harus lebih dari 0 dan pajak harus berada antara 0–100%.'
+        'Kurs harus lebih besar dari nol dan pajak harus antara 0–100%.',
       );
       return;
     }
@@ -298,329 +279,755 @@ export default function AdminPage() {
 
     try {
       const { error } = await client.rpc('admin_update_settings', {
-        p_usd_per_gold: usdPerGold,
-        p_import_tax_pct: importTaxPct,
-        p_domestic_export_tax_pct: domesticTaxPct,
+        p_usd_per_gold: fxNum,
+        p_import_tax_pct: importTaxNum,
+        p_domestic_export_tax_pct: domesticTaxNum,
       });
 
       if (error) {
-        console.error('Settings update failed:', error.message);
         setFeedback(
-          `Gagal menyimpan pengaturan: ${error.message}`
+          `Gagal menyimpan pengaturan: ${error.message}`,
         );
         return;
       }
 
-      setSettings({
-        usd_per_gold: usdPerGold,
-        import_tax_pct: importTaxPct,
-        domestic_export_tax_pct: domesticTaxPct,
-      });
+      await refresh();
 
-      setFeedback('Pengaturan berhasil disimpan.');
+      setFeedback(
+        'Pengaturan kurs dan pajak berhasil disimpan.',
+      );
     } catch (error) {
-      console.error(error);
-      setFeedback('Terjadi kesalahan saat menyimpan pengaturan.');
+      setFeedback(
+        error instanceof Error
+          ? error.message
+          : 'Terjadi kesalahan saat menyimpan pengaturan.',
+      );
     } finally {
       setBusy(false);
     }
+  };
+
+  // Simpan harga komoditas.
+  const savePrice = async () => {
+    const client = supabase;
+
+    if (!client || !isAdmin || !chosen) return;
+
+    if (
+      !Number.isFinite(goldNum) ||
+      goldNum <= 0 ||
+      !Number.isFinite(fxNum) ||
+      fxNum <= 0
+    ) {
+      setFeedback(
+        'Harga GOLD dan kurs harus berupa angka lebih besar dari nol.',
+      );
+      return;
+    }
+
+    setBusy(true);
+    setFeedback('');
+
+    try {
+      const { error } = await client.rpc(
+        'admin_update_commodity_price',
+        {
+          p_slug: selected,
+          p_price_gold: goldNum,
+        },
+      );
+
+      if (error) {
+        setFeedback(`Gagal menyimpan harga: ${error.message}`);
+        return;
+      }
+
+      await refresh();
+
+      setFeedback(
+        `Harga ${chosen.name} berhasil disimpan. Referensi baru sekitar $${priceUsd.toFixed(2)} USD.`,
+      );
+    } catch (error) {
+      setFeedback(
+        error instanceof Error
+          ? error.message
+          : 'Terjadi kesalahan saat menyimpan harga.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Simpan atau perbarui data OHLC harian.
+  const saveHistory = async () => {
+    const client = supabase;
+
+    if (!client || !isAdmin || !chosen) return;
+
+    const o = Number(open);
+    const h = Number(high);
+    const l = Number(low);
+    const c = Number(close);
+
+    if (
+      !date ||
+      ![o, h, l, c].every(
+        (number) => Number.isFinite(number) && number > 0,
+      )
+    ) {
+      setFeedback(
+        'Tanggal dan seluruh nilai OHLC harus valid dan lebih besar dari nol.',
+      );
+      return;
+    }
+
+    if (l > Math.min(o, c) || h < Math.max(o, c) || l > h) {
+      setFeedback(
+        'OHLC tidak valid. Pastikan Low ≤ Open dan Close ≤ High, serta Low ≤ High.',
+      );
+      return;
+    }
+
+    setBusy(true);
+    setFeedback('');
+
+    try {
+      const { error } = await client.rpc(
+        'admin_upsert_price_history',
+        {
+          p_slug: selected,
+          p_date: date,
+          p_open_usd: o,
+          p_high_usd: h,
+          p_low_usd: l,
+          p_close_usd: c,
+        },
+      );
+
+      if (error) {
+        setFeedback(
+          `Gagal menyimpan riwayat: ${error.message}`,
+        );
+        return;
+      }
+
+      await refresh();
+
+      setFeedback(
+        `Riwayat ${chosen.name} tanggal ${date} berhasil disimpan.`,
+      );
+    } catch (error) {
+      setFeedback(
+        error instanceof Error
+          ? error.message
+          : 'Terjadi kesalahan saat menyimpan riwayat.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!sessionReady) {
+    return (
+      <Shell active="admin">
+        <main className="content">
+          <div className="eyebrow">SECURE OPERATIONS</div>
+          <h1 className="page-title">Administration Console</h1>
+          <div className="notice">Memeriksa sesi admin…</div>
+        </main>
+      </Shell>
+    );
   }
 
-  const configured = Boolean(supabase);
-
-  return (
-    <main className="min-h-screen bg-[#080d17] px-4 py-8 text-slate-100 sm:px-8">
-      <div className="mx-auto max-w-5xl">
-        <header className="mb-8 flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-6">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-emerald-400">
-              Republic of Johor
-            </p>
-
-            <h1 className="mt-2 text-2xl font-bold sm:text-3xl">
-              Commodity Exchange
-            </h1>
-
-            <p className="mt-2 text-sm text-slate-400">
-              Administrator Control Panel
-            </p>
+  if (!userId || !isAdmin) {
+    return (
+      <Shell active="admin">
+        <main className="content admin-auth-wrap">
+          <div className="eyebrow">
+            JOHOR EXCHANGE / RESTRICTED ACCESS
           </div>
 
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={signOut}
-              disabled={busy}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm hover:bg-slate-800 disabled:opacity-50"
-            >
-              Logout
-            </button>
-          )}
-        </header>
+          <h1 className="page-title">
+            Administration Console
+          </h1>
 
-        {!configured && (
-          <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-200">
-            Supabase belum dikonfigurasi. Tambahkan
-            NEXT_PUBLIC_SUPABASE_URL dan
-            NEXT_PUBLIC_SUPABASE_ANON_KEY pada Environment Variables
-            di Vercel.
-          </div>
-        )}
+          <p className="muted">
+            Masuk dengan akun Supabase Auth yang telah diberi
+            peran administrator. URL halaman saja tidak memberikan
+            hak untuk mengubah data.
+          </p>
 
-        {!sessionReady ? (
-          <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-8 text-center">
-            <p className="text-slate-300">
-              Memeriksa sesi administrator...
-            </p>
-          </section>
-        ) : !userId ? (
-          <section className="mx-auto max-w-md rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-2xl sm:p-8">
-            <h2 className="text-xl font-semibold">
-              Login Administrator
-            </h2>
-
-            <p className="mt-2 text-sm text-slate-400">
-              Gunakan akun yang sudah dibuat melalui Supabase
-              Authentication.
-            </p>
-
-            <form onSubmit={signIn} className="mt-6 space-y-4">
+          <form
+            className="panel admin-auth-panel"
+            onSubmit={signIn}
+          >
+            <div className="panel-head">
               <div>
-                <label
-                  htmlFor="email"
-                  className="mb-2 block text-sm text-slate-300"
+                <div className="eyebrow">SECURITY GATE</div>
+                <strong
+                  style={{ display: 'block', marginTop: 5 }}
                 >
-                  Email
-                </label>
+                  Admin sign-in
+                </strong>
+              </div>
 
+              <LockKeyhole size={22} />
+            </div>
+
+            <div className="admin-form-body">
+              <div className="field">
+                <label>Email admin</label>
                 <input
-                  id="email"
                   type="email"
                   autoComplete="username"
-                  required
                   value={email}
                   onChange={(event) =>
                     setEmail(event.target.value)
                   }
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
+                  required
                   placeholder="admin@example.com"
                 />
               </div>
 
-              <div>
-                <label
-                  htmlFor="password"
-                  className="mb-2 block text-sm text-slate-300"
-                >
-                  Password
-                </label>
-
+              <div className="field">
+                <label>Password</label>
                 <input
-                  id="password"
                   type="password"
                   autoComplete="current-password"
-                  required
                   value={password}
                   onChange={(event) =>
                     setPassword(event.target.value)
                   }
-                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
-                  placeholder="Masukkan password"
+                  required
+                  placeholder="Password akun Supabase Auth"
                 />
               </div>
 
               <button
+                className="button button-primary full-button"
+                disabled={authBusy || !supabase}
                 type="submit"
-                disabled={busy || !configured}
-                className="w-full rounded-xl bg-emerald-500 px-4 py-3 font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {busy ? 'Memproses...' : 'Login'}
+                {authBusy
+                  ? 'SIGNING IN…'
+                  : 'SIGN IN SECURELY ↗'}
               </button>
-            </form>
-          </section>
-        ) : !isAdmin ? (
-          <section className="rounded-2xl border border-red-500/30 bg-red-500/10 p-6">
-            <h2 className="text-xl font-semibold text-red-300">
-              Akses administrator ditolak
-            </h2>
 
-            <p className="mt-3 break-all text-sm text-slate-300">
-              User ID: {userId}
-            </p>
-
-            <p className="mt-2 text-sm text-slate-400">
-              Pastikan kolom profiles.is_admin bernilai true untuk
-              User ID tersebut dan kebijakan RLS mengizinkan
-              pengguna membaca profilnya sendiri.
-            </p>
-
-            <button
-              type="button"
-              onClick={signOut}
-              disabled={busy}
-              className="mt-5 rounded-xl border border-slate-700 px-4 py-2 text-sm hover:bg-slate-800"
-            >
-              Logout
-            </button>
-          </section>
-        ) : (
-          <div className="space-y-6">
-            <section className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5">
-              <p className="text-sm font-medium text-emerald-400">
-                Administrator terverifikasi
-              </p>
-
-              <p className="mt-2 break-all text-xs text-slate-400">
-                User ID: {userId}
-              </p>
-            </section>
-
-            <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 sm:p-7">
-              <h2 className="text-xl font-semibold">
-                Pengaturan Bursa
-              </h2>
-
-              <p className="mt-2 text-sm text-slate-400">
-                Atur kurs GOLD/USD serta persentase pajak.
-              </p>
-
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                  <p className="text-xs text-slate-400">
-                    Kurs saat ini
-                  </p>
-
-                  <p className="mt-2 text-xl font-bold">
-                    {settings.usd_per_gold.toFixed(2)} USD
-                  </p>
-
-                  <p className="text-xs text-slate-500">
-                    per 1 GOLD
-                  </p>
+              {userId && !isAdmin && (
+                <div className="notice">
+                  Akun berhasil login tetapi belum memiliki
+                  peran administrator. Periksa apakah
+                  profiles.is_admin bernilai true untuk user ID
+                  ini.
                 </div>
+              )}
 
-                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                  <p className="text-xs text-slate-400">
-                    Pajak impor
-                  </p>
-
-                  <p className="mt-2 text-xl font-bold">
-                    {settings.import_tax_pct}%
-                  </p>
+              {!supabase && (
+                <div className="notice">
+                  Supabase belum tersambung. Periksa environment
+                  variables dan deploy ulang.
                 </div>
+              )}
 
-                <div className="rounded-xl border border-slate-800 bg-slate-950 p-4">
-                  <p className="text-xs text-slate-400">
-                    Pajak domestik/ekspor
-                  </p>
+              {feedback && (
+                <div className="notice">{feedback}</div>
+              )}
+            </div>
+          </form>
 
-                  <p className="mt-2 text-xl font-bold">
-                    {settings.domestic_export_tax_pct}%
-                  </p>
+          <div className="footer">
+            ADMIN ACCESS · NEVER SHARE YOUR PASSWORD OR SECRET KEY
+          </div>
+        </main>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell active="admin">
+      <main className="content">
+        <div className="admin-title-row">
+          <div>
+            <div className="eyebrow">
+              EXCHANGE OPERATIONS / CONTROL ROOM
+            </div>
+
+            <h1 className="page-title">
+              Administration Console
+            </h1>
+
+            <div className="muted">
+              Perubahan disimpan di PostgreSQL dan dapat
+              disiarkan ke klien yang terhubung.
+            </div>
+          </div>
+
+          <button className="button" onClick={signOut}>
+            <LogOut size={15} />
+            Sign out
+          </button>
+        </div>
+
+        <div className="admin-status-strip">
+          <span>
+            <ShieldCheck size={16} />
+            AUTHENTICATED ADMIN
+          </span>
+
+          <span className={connected ? 'positive' : 'negative'}>
+            {connected
+              ? '● DATABASE CONNECTED'
+              : '● DATABASE NOT CONNECTED'}
+          </span>
+
+          <button
+            className="button"
+            onClick={() => void refresh()}
+          >
+            <RefreshCw size={14} />
+            Refresh
+          </button>
+        </div>
+
+        <div
+          className="admin-layout"
+          style={{ marginTop: 16 }}
+        >
+          {/* Pengaturan kurs dan pajak */}
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <div className="eyebrow">
+                  01 / FX & TAX POLICY
                 </div>
+                <strong
+                  style={{ display: 'block', marginTop: 5 }}
+                >
+                  Exchange Parameters
+                </strong>
               </div>
 
-              <form
-                onSubmit={saveSettings}
-                className="mt-6 space-y-5"
-              >
-                <div>
-                  <label
-                    htmlFor="fx"
-                    className="mb-2 block text-sm text-slate-300"
-                  >
-                    Kurs USD per GOLD
-                  </label>
+              <span className="pill">GLOBAL</span>
+            </div>
 
+            <div className="admin-form-body">
+              <div className="field">
+                <label>USD per GOLD</label>
+                <input
+                  type="number"
+                  min="0.000001"
+                  step="0.01"
+                  value={fx}
+                  onChange={(event) => setFx(event.target.value)}
+                />
+                <small className="muted">
+                  Nilai kurs GOLD ke USD
+                </small>
+              </div>
+
+              <div className="form-grid">
+                <div className="field">
+                  <label>Import tax (%)</label>
                   <input
-                    id="fx"
                     type="number"
-                    min="0.01"
-                    step="0.01"
-                    required
-                    value={fx}
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={importTax}
                     onChange={(event) =>
-                      setFx(event.target.value)
+                      setImportTax(event.target.value)
                     }
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
                   />
                 </div>
 
-                <div className="grid gap-5 sm:grid-cols-2">
-                  <div>
-                    <label
-                      htmlFor="importTax"
-                      className="mb-2 block text-sm text-slate-300"
+                <div className="field">
+                  <label>Domestic / export tax (%)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={domesticTax}
+                    onChange={(event) =>
+                      setDomesticTax(event.target.value)
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="notice">
+                Preview untuk komoditas terpilih
+                <br />
+                Harga dasar:{' '}
+                <strong>
+                  $
+                  {(goldNum * fxNum || 0).toFixed(2)}
+                </strong>
+                <br />
+                Published minimum:{' '}
+                <strong>${range.min.toFixed(2)}</strong>
+                <br />
+                Import maximum:{' '}
+                <strong>${range.max.toFixed(2)}</strong>
+              </div>
+
+              <button
+                className="button button-primary full-button"
+                disabled={busy}
+                onClick={() => void saveSettings()}
+              >
+                <Save size={15} />
+                SAVE FX & TAX SETTINGS
+              </button>
+            </div>
+          </section>
+
+          {/* Harga komoditas */}
+          <section className="panel">
+            <div className="panel-head">
+              <div>
+                <div className="eyebrow">
+                  02 / SPOT PRICE CONTROL
+                </div>
+                <strong
+                  style={{ display: 'block', marginTop: 5 }}
+                >
+                  Commodity Pricing
+                </strong>
+              </div>
+
+              <span className="pill">AUTO-CONVERT</span>
+            </div>
+
+            <div className="admin-form-body">
+              <div className="field">
+                <label>Instrument</label>
+                <select
+                  value={selected}
+                  onChange={(event) =>
+                    setSelected(event.target.value)
+                  }
+                >
+                  {commodities.map((commodity) => (
+                    <option
+                      value={commodity.slug}
+                      key={commodity.slug}
                     >
-                      Pajak impor (%)
-                    </label>
+                      {commodity.symbol} — {commodity.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-                    <input
-                      id="importTax"
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="0.1"
-                      required
-                      value={importTax}
-                      onChange={(event) =>
-                        setImportTax(event.target.value)
-                      }
-                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
-                    />
-                  </div>
+              <div className="field">
+                <label>Base price (GOLD)</label>
+                <input
+                  type="number"
+                  min="0.000001"
+                  step="0.0001"
+                  value={gold}
+                  onChange={(event) =>
+                    setGold(event.target.value)
+                  }
+                />
+              </div>
 
-                  <div>
-                    <label
-                      htmlFor="domesticTax"
-                      className="mb-2 block text-sm text-slate-300"
-                    >
-                      Pajak domestik/ekspor (%)
-                    </label>
-
-                    <input
-                      id="domesticTax"
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="0.1"
-                      required
-                      value={domesticTax}
-                      onChange={(event) =>
-                        setDomesticTax(event.target.value)
-                      }
-                      className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 outline-none focus:border-emerald-500"
-                    />
-                  </div>
+              <div className="price-preview">
+                <div className="muted">
+                  AUTO-CONVERTED REFERENCE
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={busy}
-                  className="w-full rounded-xl bg-emerald-500 px-5 py-3 font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:opacity-50 sm:w-auto"
-                >
-                  {busy
-                    ? 'Menyimpan...'
-                    : 'Simpan Pengaturan'}
-                </button>
-              </form>
-            </section>
-          </div>
-        )}
+                <div className="stat-value">
+                  $
+                  {(
+                    Number.isFinite(priceUsd) ? priceUsd : 0
+                  ).toLocaleString('en-US', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}{' '}
+                  <span
+                    className="muted"
+                    style={{ fontSize: 11 }}
+                  >
+                    USD
+                  </span>
+                </div>
 
-        {feedback && (
-          <div
-            role="status"
-            className="mt-6 break-words rounded-xl border border-slate-700 bg-slate-900 p-4 text-sm text-slate-300"
+                <div className="muted">
+                  Rate:{' '}
+                  {Number.isFinite(fxNum)
+                    ? fxNum.toFixed(2)
+                    : '—'}{' '}
+                  USD / GOLD
+                </div>
+
+                <div className="range-preview">
+                  Official range{' '}
+                  <strong>
+                    ${range.min.toFixed(2)} – $
+                    {range.max.toFixed(2)}
+                  </strong>
+                </div>
+              </div>
+
+              <button
+                className="button button-primary full-button"
+                disabled={busy || !connected}
+                onClick={() => void savePrice()}
+              >
+                <Save size={15} />
+                SAVE COMMODITY PRICE
+              </button>
+            </div>
+          </section>
+
+          {/* Editor OHLC */}
+          <section
+            className="panel"
+            style={{ gridColumn: '1 / -1' }}
           >
-            {feedback}
-          </div>
-        )}
+            <div className="panel-head">
+              <div>
+                <div className="eyebrow">
+                  03 / HISTORICAL INDEX INPUT
+                </div>
+                <strong
+                  style={{ display: 'block', marginTop: 5 }}
+                >
+                  Daily OHLC Editor
+                </strong>
+              </div>
 
-        <footer className="mt-10 border-t border-slate-800 pt-5 text-center text-xs text-slate-500">
-          Johor Commodity Exchange · Admin Console
-        </footer>
-      </div>
-    </main>
+              <span className="pill">DATABASE UPSERT</span>
+            </div>
+
+            <div className="admin-form-body">
+              <div className="form-grid">
+                <div className="field">
+                  <label>Commodity</label>
+                  <select
+                    value={selected}
+                    onChange={(event) =>
+                      setSelected(event.target.value)
+                    }
+                  >
+                    {commodities.map((commodity) => (
+                      <option
+                        value={commodity.slug}
+                        key={commodity.slug}
+                      >
+                        {commodity.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="field">
+                  <label>Trading date</label>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(event) =>
+                      setDate(event.target.value)
+                    }
+                    required
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Open (USD)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={open}
+                    onChange={(event) =>
+                      setOpen(event.target.value)
+                    }
+                    required
+                  />
+                </div>
+
+                <div className="field">
+                  <label>High (USD)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={high}
+                    onChange={(event) =>
+                      setHigh(event.target.value)
+                    }
+                    required
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Low (USD)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={low}
+                    onChange={(event) =>
+                      setLow(event.target.value)
+                    }
+                    required
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Close (USD)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={close}
+                    onChange={(event) =>
+                      setClose(event.target.value)
+                    }
+                    required
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Calculated close (GOLD)</label>
+                  <input
+                    readOnly
+                    value={
+                      fxNum > 0
+                        ? (Number(close) / fxNum).toFixed(4)
+                        : '—'
+                    }
+                  />
+                </div>
+
+                <div className="field">
+                  <label>Last stored close</label>
+                  <input
+                    readOnly
+                    value={
+                      histories[selected]?.length
+                        ? `$${histories[selected][
+                            histories[selected].length - 1
+                          ].close.toFixed(2)}`
+                        : 'No history'
+                    }
+                  />
+                </div>
+              </div>
+
+              <div className="notice">
+                Validasi: Low ≤ Open dan Close ≤ High. Low juga
+                tidak boleh melebihi High. Jika tanggal sudah
+                tersedia, data diperbarui, bukan digandakan.
+              </div>
+
+              <button
+                className="button button-primary"
+                disabled={busy || !connected}
+                onClick={() => void saveHistory()}
+              >
+                <Save size={15} />
+                SAVE DAILY OHLC RECORD
+              </button>
+            </div>
+          </section>
+
+          {/* Daftar komoditas */}
+          <section
+            className="panel"
+            style={{ gridColumn: '1 / -1' }}
+          >
+            <div className="panel-head">
+              <div>
+                <div className="eyebrow">
+                  04 / CURRENT CATALOG
+                </div>
+                <strong
+                  style={{ display: 'block', marginTop: 5 }}
+                >
+                  Active Commodity Registry
+                </strong>
+              </div>
+
+              <span className="pill">
+                {commodities.length} RECORDS
+              </span>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>SYMBOL</th>
+                    <th>COMMODITY</th>
+                    <th className="right">PRICE GOLD</th>
+                    <th className="right">PRICE USD</th>
+                    <th className="right">RANGE MIN–MAX</th>
+                    <th>STATUS</th>
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {commodities.map((commodity) => {
+                    const commodityRange = rangeFor(
+                      commodity.priceUsd,
+                      settings,
+                      commodity.priceGold,
+                    );
+
+                    return (
+                      <tr key={commodity.slug}>
+                        <td>
+                          <span className="ticker">
+                            {commodity.symbol}
+                          </span>
+                        </td>
+
+                        <td>{commodity.name}</td>
+
+                        <td className="right">
+                          {commodity.priceGold.toFixed(4)}
+                        </td>
+
+                        <td className="right">
+                          ${commodity.priceUsd.toFixed(2)}
+                        </td>
+
+                        <td className="right">
+                          ${commodityRange.min.toFixed(2)} – $
+                          {commodityRange.max.toFixed(2)}
+                        </td>
+
+                        <td className="positive">
+                          ● ACTIVE
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {feedback && (
+            <div
+              className="notice"
+              role="status"
+              aria-live="polite"
+              style={{ gridColumn: '1 / -1' }}
+            >
+              {feedback}
+            </div>
+          )}
+        </div>
+
+        <div className="footer">
+          ALL CHANGES ARE SERVER-VALIDATED AND STORED THROUGH
+          SUPABASE
+        </div>
+      </main>
+    </Shell>
   );
 }
