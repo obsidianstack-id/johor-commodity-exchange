@@ -107,39 +107,45 @@ export default function AdminPage() {
     }
 
     async function checkAdmin(id: string) {
-      if (!mounted) return;
+  // Periksa client di dalam fungsi agar TypeScript
+  // mengetahui bahwa client tidak null.
+  const activeClient = supabase;
 
-      try {
-        const { data, error } = await client
-          .from('profiles')
-          .select('is_admin')
-          .eq('id', id)
-          .maybeSingle();
+  if (!activeClient) {
+    setIsAdmin(false);
+    setSessionReady(true);
+    return;
+  }
 
-        if (!mounted) return;
+  try {
+    const { data, error } = await activeClient
+      .from('profiles')
+      .select('is_admin')
+      .eq('id', id)
+      .maybeSingle();
 
-        if (error) {
-          console.error(
-            'Gagal memeriksa status admin:',
-            error.message,
-          );
-          setIsAdmin(false);
-          return;
-        }
+    if (error) {
+      console.error(
+        'Gagal memeriksa status admin:',
+        error.message,
+      );
 
-        setIsAdmin(Boolean(data?.is_admin));
-      } catch (error) {
-        console.error('Pemeriksaan admin gagal:', error);
-
-        if (mounted) {
-          setIsAdmin(false);
-        }
-      } finally {
-        if (mounted) {
-          setSessionReady(true);
-        }
-      }
+      setIsAdmin(false);
+      return;
     }
+
+    setIsAdmin(Boolean(data?.is_admin));
+  } catch (error) {
+    console.error(
+      'Terjadi kesalahan saat memeriksa admin:',
+      error,
+    );
+
+    setIsAdmin(false);
+  } finally {
+    setSessionReady(true);
+  }
+}
 
     async function initializeSession() {
       try {
