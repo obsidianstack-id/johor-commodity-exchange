@@ -15,8 +15,13 @@ import {
 } from 'lucide-react';
 
 export default function AdminPage() {
-  const { commodities, settings, histories, connected, refresh } =
-    useMarketData();
+  const {
+    commodities,
+    settings,
+    histories,
+    connected,
+    refresh,
+  } = useMarketData();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -46,7 +51,7 @@ export default function AdminPage() {
   const [busy, setBusy] = useState(false);
 
   const chosen =
-    commodities.find((commodity) => commodity.slug === selected) ||
+    commodities.find((item) => item.slug === selected) ??
     commodities[0];
 
   const fxNum = Number(fx);
@@ -67,14 +72,14 @@ export default function AdminPage() {
     [priceUsd, fxNum, importTax, domesticTax, goldNum],
   );
 
-  // Sinkronkan formulir dengan pengaturan dari database.
+  // Sinkronisasi pengaturan dari database.
   useEffect(() => {
     setFx(String(settings.usd_per_gold));
     setImportTax(String(settings.import_tax_pct));
     setDomesticTax(String(settings.domestic_export_tax_pct));
   }, [settings]);
 
-  // Muat harga dan riwayat saat komoditas berubah.
+  // Memuat harga dan riwayat komoditas yang dipilih.
   useEffect(() => {
     const commodity = commodities.find(
       (item) => item.slug === selected,
@@ -96,56 +101,65 @@ export default function AdminPage() {
     }
   }, [selected, connected, commodities, histories]);
 
-  // Pemeriksaan sesi dan hak akses administrator.
+  // ============================================================
+  // AUTENTIKASI DAN PEMERIKSAAN HAK ADMIN
+  // ============================================================
   useEffect(() => {
-    const client = supabase;
     let mounted = true;
 
-    if (!client) {
+    // Buat alias yang secara eksplisit bertipe non-null
+    // setelah pemeriksaan konfigurasi Supabase.
+    const configuredClient = supabase;
+
+    if (!configuredClient) {
       setSessionReady(true);
-      return;
+      setUserId(null);
+      setIsAdmin(false);
+
+      return () => {
+        mounted = false;
+      };
     }
+
+    const client: NonNullable<typeof supabase> =
+      configuredClient;
 
     async function checkAdmin(id: string) {
-  // Periksa client di dalam fungsi agar TypeScript
-  // mengetahui bahwa client tidak null.
-  const activeClient = supabase;
+      try {
+        const { data, error } = await client
+          .from('profiles')
+          .select('is_admin')
+          .eq('id', id)
+          .maybeSingle();
 
-  if (!activeClient) {
-    setIsAdmin(false);
-    setSessionReady(true);
-    return;
-  }
+        if (!mounted) return;
 
-  try {
-    const { data, error } = await activeClient
-      .from('profiles')
-      .select('is_admin')
-      .eq('id', id)
-      .maybeSingle();
+        if (error) {
+          console.error(
+            'Gagal memeriksa status admin:',
+            error.message,
+          );
 
-    if (error) {
-      console.error(
-        'Gagal memeriksa status admin:',
-        error.message,
-      );
+          setIsAdmin(false);
+          return;
+        }
 
-      setIsAdmin(false);
-      return;
+        setIsAdmin(Boolean(data?.is_admin));
+      } catch (error) {
+        console.error(
+          'Terjadi kesalahan saat memeriksa admin:',
+          error,
+        );
+
+        if (mounted) {
+          setIsAdmin(false);
+        }
+      } finally {
+        if (mounted) {
+          setSessionReady(true);
+        }
+      }
     }
-
-    setIsAdmin(Boolean(data?.is_admin));
-  } catch (error) {
-    console.error(
-      'Terjadi kesalahan saat memeriksa admin:',
-      error,
-    );
-
-    setIsAdmin(false);
-  } finally {
-    setSessionReady(true);
-  }
-}
 
     async function initializeSession() {
       try {
@@ -154,7 +168,11 @@ export default function AdminPage() {
         if (!mounted) return;
 
         if (error) {
-          console.error('Gagal memeriksa sesi:', error.message);
+          console.error(
+            'Gagal memeriksa sesi:',
+            error.message,
+          );
+
           setSessionReady(true);
           return;
         }
@@ -186,6 +204,7 @@ export default function AdminPage() {
       if (!mounted) return;
 
       const user = session?.user ?? null;
+
       setUserId(user?.id ?? null);
 
       if (!user) {
@@ -194,7 +213,7 @@ export default function AdminPage() {
         return;
       }
 
-      // Jalankan pemeriksaan di luar callback autentikasi.
+      // Jalankan pemeriksaan admin di luar callback auth.
       setTimeout(() => {
         if (mounted) {
           void checkAdmin(user.id);
@@ -208,16 +227,23 @@ export default function AdminPage() {
     };
   }, []);
 
-  // Login administrator.
-  const signIn = async (event: FormEvent<HTMLFormElement>) => {
+  // ============================================================
+  // LOGIN
+  // ============================================================
+  const signIn = async (
+    event: FormEvent<HTMLFormElement>,
+  ) => {
     event.preventDefault();
 
-    const client = supabase;
+    const configuredClient = supabase;
 
-    if (!client) {
+    if (!configuredClient) {
       setFeedback('Supabase belum dikonfigurasi.');
       return;
     }
+
+    const client: NonNullable<typeof supabase> =
+      configuredClient;
 
     setAuthBusy(true);
     setFeedback('');
@@ -242,12 +268,22 @@ export default function AdminPage() {
     }
   };
 
-  // Logout administrator.
+  // ============================================================
+  // LOGOUT
+  // ============================================================
   const signOut = async () => {
-    const client = supabase;
+    const configuredClient = supabase;
 
-    if (client) {
-      await client.auth.signOut();
+    if (configuredClient) {
+      const client: NonNullable<typeof supabase> =
+        configuredClient;
+
+      const { error } = await client.auth.signOut();
+
+      if (error) {
+        setFeedback(`Logout gagal: ${error.message}`);
+        return;
+      }
     }
 
     setUserId(null);
@@ -255,11 +291,16 @@ export default function AdminPage() {
     setFeedback('Sesi admin telah berakhir.');
   };
 
-  // Simpan pengaturan kurs dan pajak.
+  // ============================================================
+  // SIMPAN PENGATURAN KURS DAN PAJAK
+  // ============================================================
   const saveSettings = async () => {
-    const client = supabase;
+    const configuredClient = supabase;
 
-    if (!client || !isAdmin) return;
+    if (!configuredClient || !isAdmin) return;
+
+    const client: NonNullable<typeof supabase> =
+      configuredClient;
 
     const importTaxNum = Number(importTax);
     const domesticTaxNum = Number(domesticTax);
@@ -284,11 +325,14 @@ export default function AdminPage() {
     setFeedback('');
 
     try {
-      const { error } = await client.rpc('admin_update_settings', {
-        p_usd_per_gold: fxNum,
-        p_import_tax_pct: importTaxNum,
-        p_domestic_export_tax_pct: domesticTaxNum,
-      });
+      const { error } = await client.rpc(
+        'admin_update_settings',
+        {
+          p_usd_per_gold: fxNum,
+          p_import_tax_pct: importTaxNum,
+          p_domestic_export_tax_pct: domesticTaxNum,
+        },
+      );
 
       if (error) {
         setFeedback(
@@ -313,11 +357,16 @@ export default function AdminPage() {
     }
   };
 
-  // Simpan harga komoditas.
+  // ============================================================
+  // SIMPAN HARGA KOMODITAS
+  // ============================================================
   const savePrice = async () => {
-    const client = supabase;
+    const configuredClient = supabase;
 
-    if (!client || !isAdmin || !chosen) return;
+    if (!configuredClient || !isAdmin || !chosen) return;
+
+    const client: NonNullable<typeof supabase> =
+      configuredClient;
 
     if (
       !Number.isFinite(goldNum) ||
@@ -326,7 +375,7 @@ export default function AdminPage() {
       fxNum <= 0
     ) {
       setFeedback(
-        'Harga GOLD dan kurs harus berupa angka lebih besar dari nol.',
+        'Harga GOLD dan kurs harus lebih besar dari nol.',
       );
       return;
     }
@@ -344,14 +393,16 @@ export default function AdminPage() {
       );
 
       if (error) {
-        setFeedback(`Gagal menyimpan harga: ${error.message}`);
+        setFeedback(
+          `Gagal menyimpan harga: ${error.message}`,
+        );
         return;
       }
 
       await refresh();
 
       setFeedback(
-        `Harga ${chosen.name} berhasil disimpan. Referensi baru sekitar $${priceUsd.toFixed(2)} USD.`,
+        `Harga ${chosen.name} berhasil disimpan. Referensi sekitar $${priceUsd.toFixed(2)} USD.`,
       );
     } catch (error) {
       setFeedback(
@@ -364,11 +415,16 @@ export default function AdminPage() {
     }
   };
 
-  // Simpan atau perbarui data OHLC harian.
+  // ============================================================
+  // SIMPAN RIWAYAT HARGA OHLC
+  // ============================================================
   const saveHistory = async () => {
-    const client = supabase;
+    const configuredClient = supabase;
 
-    if (!client || !isAdmin || !chosen) return;
+    if (!configuredClient || !isAdmin || !chosen) return;
+
+    const client: NonNullable<typeof supabase> =
+      configuredClient;
 
     const o = Number(open);
     const h = Number(high);
@@ -387,7 +443,11 @@ export default function AdminPage() {
       return;
     }
 
-    if (l > Math.min(o, c) || h < Math.max(o, c) || l > h) {
+    if (
+      l > Math.min(o, c) ||
+      h < Math.max(o, c) ||
+      l > h
+    ) {
       setFeedback(
         'OHLC tidak valid. Pastikan Low ≤ Open dan Close ≤ High, serta Low ≤ High.',
       );
@@ -433,18 +493,28 @@ export default function AdminPage() {
     }
   };
 
+  // ============================================================
+  // LOADING
+  // ============================================================
   if (!sessionReady) {
     return (
       <Shell active="admin">
         <main className="content">
           <div className="eyebrow">SECURE OPERATIONS</div>
-          <h1 className="page-title">Administration Console</h1>
-          <div className="notice">Memeriksa sesi admin…</div>
+          <h1 className="page-title">
+            Administration Console
+          </h1>
+          <div className="notice">
+            Memeriksa sesi admin…
+          </div>
         </main>
       </Shell>
     );
   }
 
+  // ============================================================
+  // HALAMAN LOGIN
+  // ============================================================
   if (!userId || !isAdmin) {
     return (
       <Shell active="admin">
@@ -458,9 +528,9 @@ export default function AdminPage() {
           </h1>
 
           <p className="muted">
-            Masuk dengan akun Supabase Auth yang telah diberi
-            peran administrator. URL halaman saja tidak memberikan
-            hak untuk mengubah data.
+            Masuk menggunakan akun Supabase Auth yang telah
+            diberi hak administrator. Mengetahui URL halaman
+            tidak otomatis memberikan akses administrator.
           </p>
 
           <form
@@ -471,7 +541,10 @@ export default function AdminPage() {
               <div>
                 <div className="eyebrow">SECURITY GATE</div>
                 <strong
-                  style={{ display: 'block', marginTop: 5 }}
+                  style={{
+                    display: 'block',
+                    marginTop: 5,
+                  }}
                 >
                   Admin sign-in
                 </strong>
@@ -521,10 +594,10 @@ export default function AdminPage() {
 
               {userId && !isAdmin && (
                 <div className="notice">
-                  Akun berhasil login tetapi belum memiliki
-                  peran administrator. Periksa apakah
-                  profiles.is_admin bernilai true untuk user ID
-                  ini.
+                  Akun berhasil login, tetapi belum memiliki
+                  hak administrator. Periksa apakah
+                  profiles.is_admin bernilai true untuk user
+                  ID tersebut.
                 </div>
               )}
 
@@ -549,6 +622,9 @@ export default function AdminPage() {
     );
   }
 
+  // ============================================================
+  // DASHBOARD ADMIN
+  // ============================================================
   return (
     <Shell active="admin">
       <main className="content">
@@ -563,12 +639,14 @@ export default function AdminPage() {
             </h1>
 
             <div className="muted">
-              Perubahan disimpan di PostgreSQL dan dapat
-              disiarkan ke klien yang terhubung.
+              Pengaturan, harga komoditas, dan riwayat pasar.
             </div>
           </div>
 
-          <button className="button" onClick={signOut}>
+          <button
+            className="button"
+            onClick={() => void signOut()}
+          >
             <LogOut size={15} />
             Sign out
           </button>
@@ -580,7 +658,9 @@ export default function AdminPage() {
             AUTHENTICATED ADMIN
           </span>
 
-          <span className={connected ? 'positive' : 'negative'}>
+          <span
+            className={connected ? 'positive' : 'negative'}
+          >
             {connected
               ? '● DATABASE CONNECTED'
               : '● DATABASE NOT CONNECTED'}
@@ -599,15 +679,19 @@ export default function AdminPage() {
           className="admin-layout"
           style={{ marginTop: 16 }}
         >
-          {/* Pengaturan kurs dan pajak */}
+          {/* PENGATURAN KURS DAN PAJAK */}
           <section className="panel">
             <div className="panel-head">
               <div>
                 <div className="eyebrow">
                   01 / FX & TAX POLICY
                 </div>
+
                 <strong
-                  style={{ display: 'block', marginTop: 5 }}
+                  style={{
+                    display: 'block',
+                    marginTop: 5,
+                  }}
                 >
                   Exchange Parameters
                 </strong>
@@ -624,11 +708,10 @@ export default function AdminPage() {
                   min="0.000001"
                   step="0.01"
                   value={fx}
-                  onChange={(event) => setFx(event.target.value)}
+                  onChange={(event) =>
+                    setFx(event.target.value)
+                  }
                 />
-                <small className="muted">
-                  Nilai kurs GOLD ke USD
-                </small>
               </div>
 
               <div className="form-grid">
@@ -662,12 +745,11 @@ export default function AdminPage() {
               </div>
 
               <div className="notice">
-                Preview untuk komoditas terpilih
+                Preview komoditas terpilih
                 <br />
                 Harga dasar:{' '}
                 <strong>
-                  $
-                  {(goldNum * fxNum || 0).toFixed(2)}
+                  ${(goldNum * fxNum || 0).toFixed(2)}
                 </strong>
                 <br />
                 Published minimum:{' '}
@@ -688,15 +770,19 @@ export default function AdminPage() {
             </div>
           </section>
 
-          {/* Harga komoditas */}
+          {/* HARGA KOMODITAS */}
           <section className="panel">
             <div className="panel-head">
               <div>
                 <div className="eyebrow">
                   02 / SPOT PRICE CONTROL
                 </div>
+
                 <strong
-                  style={{ display: 'block', marginTop: 5 }}
+                  style={{
+                    display: 'block',
+                    marginTop: 5,
+                  }}
                 >
                   Commodity Pricing
                 </strong>
@@ -708,6 +794,7 @@ export default function AdminPage() {
             <div className="admin-form-body">
               <div className="field">
                 <label>Instrument</label>
+
                 <select
                   value={selected}
                   onChange={(event) =>
@@ -727,6 +814,7 @@ export default function AdminPage() {
 
               <div className="field">
                 <label>Base price (GOLD)</label>
+
                 <input
                   type="number"
                   min="0.000001"
@@ -745,8 +833,9 @@ export default function AdminPage() {
 
                 <div className="stat-value">
                   $
-                  {(
-                    Number.isFinite(priceUsd) ? priceUsd : 0
+                  {(Number.isFinite(priceUsd)
+                    ? priceUsd
+                    : 0
                   ).toLocaleString('en-US', {
                     minimumFractionDigits: 2,
                     maximumFractionDigits: 2,
@@ -787,7 +876,7 @@ export default function AdminPage() {
             </div>
           </section>
 
-          {/* Editor OHLC */}
+          {/* EDITOR RIWAYAT OHLC */}
           <section
             className="panel"
             style={{ gridColumn: '1 / -1' }}
@@ -797,8 +886,12 @@ export default function AdminPage() {
                 <div className="eyebrow">
                   03 / HISTORICAL INDEX INPUT
                 </div>
+
                 <strong
-                  style={{ display: 'block', marginTop: 5 }}
+                  style={{
+                    display: 'block',
+                    marginTop: 5,
+                  }}
                 >
                   Daily OHLC Editor
                 </strong>
@@ -811,6 +904,7 @@ export default function AdminPage() {
               <div className="form-grid">
                 <div className="field">
                   <label>Commodity</label>
+
                   <select
                     value={selected}
                     onChange={(event) =>
@@ -830,6 +924,7 @@ export default function AdminPage() {
 
                 <div className="field">
                   <label>Trading date</label>
+
                   <input
                     type="date"
                     value={date}
@@ -842,6 +937,7 @@ export default function AdminPage() {
 
                 <div className="field">
                   <label>Open (USD)</label>
+
                   <input
                     type="number"
                     min="0.01"
@@ -856,6 +952,7 @@ export default function AdminPage() {
 
                 <div className="field">
                   <label>High (USD)</label>
+
                   <input
                     type="number"
                     min="0.01"
@@ -870,6 +967,7 @@ export default function AdminPage() {
 
                 <div className="field">
                   <label>Low (USD)</label>
+
                   <input
                     type="number"
                     min="0.01"
@@ -884,6 +982,7 @@ export default function AdminPage() {
 
                 <div className="field">
                   <label>Close (USD)</label>
+
                   <input
                     type="number"
                     min="0.01"
@@ -898,6 +997,7 @@ export default function AdminPage() {
 
                 <div className="field">
                   <label>Calculated close (GOLD)</label>
+
                   <input
                     readOnly
                     value={
@@ -910,11 +1010,14 @@ export default function AdminPage() {
 
                 <div className="field">
                   <label>Last stored close</label>
+
                   <input
                     readOnly
                     value={
                       histories[selected]?.length
-                        ? `$${histories[selected][
+                        ? `$${histories[
+                            selected
+                          ][
                             histories[selected].length - 1
                           ].close.toFixed(2)}`
                         : 'No history'
@@ -924,9 +1027,9 @@ export default function AdminPage() {
               </div>
 
               <div className="notice">
-                Validasi: Low ≤ Open dan Close ≤ High. Low juga
-                tidak boleh melebihi High. Jika tanggal sudah
-                tersedia, data diperbarui, bukan digandakan.
+                Validasi OHLC: Low tidak boleh melebihi Open,
+                Close, atau High. High tidak boleh lebih rendah
+                daripada Open atau Close.
               </div>
 
               <button
@@ -940,7 +1043,7 @@ export default function AdminPage() {
             </div>
           </section>
 
-          {/* Daftar komoditas */}
+          {/* DAFTAR KOMODITAS */}
           <section
             className="panel"
             style={{ gridColumn: '1 / -1' }}
@@ -950,8 +1053,12 @@ export default function AdminPage() {
                 <div className="eyebrow">
                   04 / CURRENT CATALOG
                 </div>
+
                 <strong
-                  style={{ display: 'block', marginTop: 5 }}
+                  style={{
+                    display: 'block',
+                    marginTop: 5,
+                  }}
                 >
                   Active Commodity Registry
                 </strong>
