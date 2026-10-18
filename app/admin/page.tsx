@@ -47,6 +47,9 @@ export default function AdminPage() {
   const [low, setLow] = useState('16.77');
   const [close, setClose] = useState('16.77');
 
+  // Melindungi input OHLC saat pengguna sedang mengetik.
+  const [ohlcDirty, setOhlcDirty] = useState(false);
+
   const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -79,8 +82,11 @@ export default function AdminPage() {
     setDomesticTax(String(settings.domestic_export_tax_pct));
   }, [settings]);
 
-  // Memuat harga dan riwayat komoditas yang dipilih.
+  // Memuat data komoditas dan OHLC.
+  // Jangan menimpa input OHLC selama pengguna sedang mengedit.
   useEffect(() => {
+    if (ohlcDirty) return;
+
     const commodity = commodities.find(
       (item) => item.slug === selected,
     );
@@ -99,7 +105,13 @@ export default function AdminPage() {
       setLow(last.low.toFixed(2));
       setClose(last.close.toFixed(2));
     }
-  }, [selected, connected, commodities, histories]);
+  }, [
+    selected,
+    connected,
+    commodities,
+    histories,
+    ohlcDirty,
+  ]);
 
   // ============================================================
   // AUTENTIKASI DAN PEMERIKSAAN HAK ADMIN
@@ -107,8 +119,6 @@ export default function AdminPage() {
   useEffect(() => {
     let mounted = true;
 
-    // Buat alias yang secara eksplisit bertipe non-null
-    // setelah pemeriksaan konfigurasi Supabase.
     const configuredClient = supabase;
 
     if (!configuredClient) {
@@ -213,7 +223,6 @@ export default function AdminPage() {
         return;
       }
 
-      // Jalankan pemeriksaan admin di luar callback auth.
       setTimeout(() => {
         if (mounted) {
           void checkAdmin(user.id);
@@ -477,7 +486,11 @@ export default function AdminPage() {
         return;
       }
 
+      // Pertahankan nilai form yang baru saja disimpan.
+      // Setelah refresh selesai, izinkan sinkronisasi berikutnya.
       await refresh();
+
+      setOhlcDirty(false);
 
       setFeedback(
         `Riwayat ${chosen.name} tanggal ${date} berhasil disimpan.`,
@@ -797,9 +810,10 @@ export default function AdminPage() {
 
                 <select
                   value={selected}
-                  onChange={(event) =>
-                    setSelected(event.target.value)
-                  }
+                  onChange={(event) => {
+                    setOhlcDirty(false);
+                    setSelected(event.target.value);
+                  }}
                 >
                   {commodities.map((commodity) => (
                     <option
@@ -907,9 +921,10 @@ export default function AdminPage() {
 
                   <select
                     value={selected}
-                    onChange={(event) =>
-                      setSelected(event.target.value)
-                    }
+                    onChange={(event) => {
+                      setOhlcDirty(false);
+                      setSelected(event.target.value);
+                    }}
                   >
                     {commodities.map((commodity) => (
                       <option
@@ -928,9 +943,10 @@ export default function AdminPage() {
                   <input
                     type="date"
                     value={date}
-                    onChange={(event) =>
-                      setDate(event.target.value)
-                    }
+                    onChange={(event) => {
+                      setOhlcDirty(true);
+                      setDate(event.target.value);
+                    }}
                     required
                   />
                 </div>
@@ -943,9 +959,10 @@ export default function AdminPage() {
                     min="0.01"
                     step="0.01"
                     value={open}
-                    onChange={(event) =>
-                      setOpen(event.target.value)
-                    }
+                    onChange={(event) => {
+                      setOhlcDirty(true);
+                      setOpen(event.target.value);
+                    }}
                     required
                   />
                 </div>
@@ -958,9 +975,10 @@ export default function AdminPage() {
                     min="0.01"
                     step="0.01"
                     value={high}
-                    onChange={(event) =>
-                      setHigh(event.target.value)
-                    }
+                    onChange={(event) => {
+                      setOhlcDirty(true);
+                      setHigh(event.target.value);
+                    }}
                     required
                   />
                 </div>
@@ -973,9 +991,10 @@ export default function AdminPage() {
                     min="0.01"
                     step="0.01"
                     value={low}
-                    onChange={(event) =>
-                      setLow(event.target.value)
-                    }
+                    onChange={(event) => {
+                      setOhlcDirty(true);
+                      setLow(event.target.value);
+                    }}
                     required
                   />
                 </div>
@@ -988,9 +1007,10 @@ export default function AdminPage() {
                     min="0.01"
                     step="0.01"
                     value={close}
-                    onChange={(event) =>
-                      setClose(event.target.value)
-                    }
+                    onChange={(event) => {
+                      setOhlcDirty(true);
+                      setClose(event.target.value);
+                    }}
                     required
                   />
                 </div>
@@ -1015,16 +1035,20 @@ export default function AdminPage() {
                     readOnly
                     value={
                       histories[selected]?.length
-                        ? `$${histories[
-                            selected
-                          ][
-                            histories[selected].length - 1
-                          ].close.toFixed(2)}`
+                        ? `$${histories[selected][histories[selected].length - 1].close.toFixed(2)}`
                         : 'No history'
                     }
                   />
                 </div>
               </div>
+
+              {ohlcDirty && (
+                <div className="notice">
+                  Kamu sedang mengedit data OHLC. Perubahan
+                  belum tersimpan ke database sampai tombol
+                  SAVE DAILY OHLC RECORD ditekan.
+                </div>
+              )}
 
               <div className="notice">
                 Validasi OHLC: Low tidak boleh melebihi Open,
@@ -1038,7 +1062,9 @@ export default function AdminPage() {
                 onClick={() => void saveHistory()}
               >
                 <Save size={15} />
-                SAVE DAILY OHLC RECORD
+                {busy
+                  ? 'SAVING…'
+                  : 'SAVE DAILY OHLC RECORD'}
               </button>
             </div>
           </section>
